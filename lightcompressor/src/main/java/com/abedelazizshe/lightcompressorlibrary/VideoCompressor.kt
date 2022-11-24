@@ -100,31 +100,34 @@ object VideoCompressor : CoroutineScope by MainScope() {
 
                 val job = async { getMediaPath(context, uris[i]) }
                 val path = job.await()
+                try {
+                    val desFile = saveVideoFile(context, path, storageConfiguration, isStreamable)
 
-                val desFile = saveVideoFile(context, path, storageConfiguration, isStreamable)
+                    if (isStreamable)
+                        streamableFile = saveVideoFile(context, path, storageConfiguration, null)
 
-                if (isStreamable)
-                    streamableFile = saveVideoFile(context, path, storageConfiguration, null)
+                    desFile?.let {
+                        isRunning = true
+                        listener.onStart(i)
+                        val result = startCompression(
+                            i,
+                            context,
+                            uris[i],
+                            desFile.path,
+                            streamableFile?.path,
+                            configuration,
+                            listener,
+                        )
 
-                desFile?.let {
-                    isRunning = true
-                    listener.onStart(i)
-                    val result = startCompression(
-                        i,
-                        context,
-                        uris[i],
-                        desFile.path,
-                        streamableFile?.path,
-                        configuration,
-                        listener,
-                    )
-
-                    // Runs in Main(UI) Thread
-                    if (result.success) {
-                        listener.onSuccess(i, result.size, result.path)
-                    } else {
-                        listener.onFailure(i, result.failureMessage ?: "An error has occurred!")
+                        // Runs in Main(UI) Thread
+                        if (result.success) {
+                            listener.onSuccess(i, result.size, result.path)
+                        } else {
+                            listener.onFailure(i, result.failureMessage ?: "An error has occurred!")
+                        }
                     }
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
             }
         }
@@ -157,8 +160,7 @@ object VideoCompressor : CoroutineScope by MainScope() {
             },
         )
     }
-
-
+    
     private fun saveVideoFile(
         context: Context,
         filePath: String?,
@@ -221,7 +223,7 @@ object VideoCompressor : CoroutineScope by MainScope() {
 
                 }
             }
-        return File(context.filesDir, videoFileName)
+        return File(context.externalCacheDir, videoFileName)
     }
 
     @RequiresApi(Build.VERSION_CODES.Q)
@@ -246,7 +248,6 @@ object VideoCompressor : CoroutineScope by MainScope() {
             MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
 
         val fileUri = context.contentResolver.insert(collection, values)
-
         fileUri?.let {
             context.contentResolver.openFileDescriptor(fileUri, "rw")
                 .use { descriptor ->
@@ -267,7 +268,6 @@ object VideoCompressor : CoroutineScope by MainScope() {
             values.clear()
             values.put(MediaStore.Video.Media.IS_PENDING, 0)
             context.contentResolver.update(fileUri, values, null, null)
-
             return File(getMediaPath(context, fileUri))
         }
         return null
@@ -280,7 +280,7 @@ object VideoCompressor : CoroutineScope by MainScope() {
         val projection = arrayOf(MediaStore.Video.Media.DATA)
         var cursor: Cursor? = null
         try {
-            cursor = resolver.query(uri, projection, null, null, null)
+            cursor = resolver.query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, projection, null, null, null)
             return if (cursor != null) {
                 val columnIndex = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATA)
                 cursor.moveToFirst()
